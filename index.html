@@ -262,7 +262,13 @@ textarea.inp{height:auto;min-height:84px;padding:10px 12px;resize:vertical}
   <div class="sheetdlg" role="dialog" aria-modal="true" aria-labelledby="sgT">
     <h3 id="sgT">Unterschrift</h3>
     <div id="sigSaved" hidden><div class="lab" style="margin-bottom:8px">Gespeicherte Unterschriften</div><div class="sigs" id="sigList"></div></div>
-    <div class="lab">Mit dem Finger unterschreiben</div>
+    <div class="box" style="gap:10px;padding:12px">
+      <div class="row" style="justify-content:space-between"><span class="lab">Unterschrift aus Bild laden</span><label class="btn small" for="sigFile">Bild wählen</label></div>
+      <input type="file" id="sigFile" accept="image/*" hidden>
+      <label class="chk" style="font-size:13px"><input type="checkbox" id="sigBg" checked> Weißen Hintergrund entfernen</label>
+      <span class="hint" style="white-space:normal">Foto oder Scan der Unterschrift auf hellem Papier. Wird zugeschnitten und kann danach frei platziert werden.</span>
+    </div>
+    <div class="lab">Oder mit dem Finger unterschreiben</div>
     <canvas class="sigpad" id="sigPad"></canvas>
     <div class="row">
       <span class="lab">Farbe</span>
@@ -449,7 +455,7 @@ function buildEditView(){
     pageList.appendChild(wrap);p._el=wrap;p._key=null;elMap.set(wrap,p);
     const oc=wrap.querySelector('.oc');
     oc.addEventListener('pointerdown',e=>onDown(p,e));oc.addEventListener('pointermove',e=>onMove(p,e));
-    oc.addEventListener('pointerup',e=>onUp(p,e));oc.addEventListener('pointercancel',e=>onUp(p,e,true));
+    oc.addEventListener('pointerup',e=>onUp(p,e));oc.addEventListener('pointercancel',e=>onUp(p,e,true));oc.addEventListener('lostpointercapture',e=>{if(G&&G.pid===e.pointerId)onUp(p,e);});
     io.observe(wrap);
   });
   layoutPages();
@@ -500,30 +506,30 @@ let G=null;
 function evPt(p,e){const r=e.currentTarget.getBoundingClientRect();return toBase(p,(e.clientX-r.left)/p._s,(e.clientY-r.top)/p._s);}
 function pref(){return PREF[S.tool]||{color:'#1d2633',size:3};}
 function onDown(p,e){
-  const t=S.tool;if(t==='hand')return;if(G)return;
+  const t=S.tool;if(t==='hand')return;if(G&&G.pid!==e.pointerId&&G.alive)return;G=null;
   e.preventDefault();try{e.currentTarget.setPointerCapture(e.pointerId);}catch(_){}
   const[x,y]=evPt(p,e);
-  if(t==='select'){const i=hit(p,x,y);if(i>=0){setSel(p,i);G={t:'move',p,x,y,moved:false,snap:snapshot()};}else setSel(null);return;}
-  if(t==='eraser'){G={t:'erase',p,snap:snapshot(),did:false};eraseAt(p,x,y);return;}
-  if(t==='text'||t==='place'){G={t:'tap',p,x,y};return;}
+  if(t==='select'){const i=hit(p,x,y);if(i>=0){setSel(p,i);G={t:'move',p,x,y,moved:false,snap:snapshot()};}else{setSel(null);}if(G){G.pid=e.pointerId;G.alive=true;}return;}
+  if(t==='eraser'){G={t:'erase',p,snap:snapshot(),did:false,pid:e.pointerId,alive:true};eraseAt(p,x,y);return;}
+  if(t==='text'||t==='place'){G={t:'tap',p,x,y,pid:e.pointerId,alive:true};return;}
   const pr=pref();
-  if(t==='pen'||t==='hl'){S.draft={p,o:{t:'ink',pts:[[x,y]],color:pr.color,lw:pr.size,a:t==='hl'?0.38:1}};G={t:'draw',p};schedDraw(p);return;}
+  if(t==='pen'||t==='hl'){S.draft={p,o:{t:'ink',pts:[[x,y]],color:pr.color,lw:pr.size,a:t==='hl'?0.38:1}};G={t:'draw',p,pid:e.pointerId,alive:true};schedDraw(p);return;}
   let o;
   if(t==='line'||t==='arrow')o={t:'line',x1:x,y1:y,x2:x,y2:y,color:pr.color,lw:pr.size,arrow:t==='arrow'};
   else if(t==='white')o={t:'rect',x,y,w:0,h:0,fill:'#ffffff',color:'#ffffff',lw:0};
   else if(t==='redact')o={t:'rect',x,y,w:0,h:0,fill:'#000000',color:'#000000',lw:0,redact:true};
   else o={t:t==='ellipse'?'ellipse':'rect',x,y,w:0,h:0,color:pr.color,lw:pr.size,fill:pr.filled?pr.color:null};
-  S.draft={p,o};G={t:'shape',p,x0:x,y0:y};
+  S.draft={p,o};G={t:'shape',p,x0:x,y0:y,pid:e.pointerId,alive:true};
 }
 function onMove(p,e){
-  if(!G||G.p!==p)return;const[x,y]=evPt(p,e);
+  if(!G||G.p!==p||G.pid!==e.pointerId)return;const[x,y]=evPt(p,e);
   if(G.t==='move'){const o=p.ann[S.sel.i];moveObj(o,x-G.x,y-G.y);G.x=x;G.y=y;G.moved=true;schedDraw(p);}
   else if(G.t==='draw'){const pts=S.draft.o.pts,l=pts[pts.length-1];if(Math.hypot(x-l[0],y-l[1])>0.6/p._s){pts.push([x,y]);schedDraw(p);}}
   else if(G.t==='shape'){const o=S.draft.o;if(o.t==='line'){o.x2=x;o.y2=y;}else{o.x=Math.min(G.x0,x);o.y=Math.min(G.y0,y);o.w=Math.abs(x-G.x0);o.h=Math.abs(y-G.y0);}schedDraw(p);}
   else if(G.t==='erase')eraseAt(p,x,y);
 }
 function onUp(p,e,cancel){
-  if(!G||G.p!==p)return;const g=G;G=null;
+  if(!G||G.p!==p||G.pid!==e.pointerId)return;const g=G;G=null;
   if(g.t==='move'){if(g.moved){pushUndo(g.snap);invalidateThumb(p);}}
   else if(g.t==='draw'){if(!cancel){const o=S.draft.o;pushUndo();p.ann.push(o);invalidateThumb(p);}S.draft=null;}
   else if(g.t==='shape'){const o=S.draft.o;S.draft=null;const big=o.t==='line'?Math.hypot(o.x2-o.x1,o.y2-o.y1)>3:(o.w>3&&o.h>3);
@@ -643,6 +649,24 @@ $('#sgOk').addEventListener('click',()=>{
   const url=cv.toDataURL('image/png');const r=h/w;
   if($('#sgKeep').checked){const list=sigList();list.unshift({url,r});sigSave(list);}
   useSig(url,r);});
+async function sigFromFile(file){
+  const r=await readImage(file,1800);const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=r.url;});
+  const c=document.createElement('canvas');c.width=r.w;c.height=r.h;const x=c.getContext('2d');x.drawImage(im,0,0);
+  const d=x.getImageData(0,0,r.w,r.h),p=d.data;const rmBg=$('#sigBg').checked;
+  let lo=255;if(rmBg){for(let i=0;i<p.length;i+=16){const l=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];if(l<lo)lo=l;}}
+  const hi=rmBg?Math.max(lo+40,Math.min(215,lo+(255-lo)*0.6)):256;
+  let x0=r.w,y0=r.h,x1=-1,y1=-1;
+  for(let y=0;y<r.h;y++)for(let xx=0;xx<r.w;xx++){const i=(y*r.w+xx)*4;
+    if(rmBg){const l=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];const a=Math.max(0,Math.min(1,(hi-l)/Math.max(30,(hi-lo)*0.7)));p[i+3]=Math.round(a*255);if(a>0){const k=Math.min(1,0.35+a*0.65);p[i]*=k;p[i+1]*=k;p[i+2]*=k;}}
+    if(p[i+3]>40){if(xx<x0)x0=xx;if(xx>x1)x1=xx;if(y<y0)y0=y;if(y>y1)y1=y;}}
+  if(x1<0){toast('Im Bild wurde keine Unterschrift erkannt.');return;}
+  x.putImageData(d,0,0);const m=6;x0=Math.max(0,x0-m);y0=Math.max(0,y0-m);x1=Math.min(r.w-1,x1+m);y1=Math.min(r.h-1,y1+m);
+  const w=x1-x0+1,h=y1-y0+1;const o=document.createElement('canvas');o.width=w;o.height=h;o.getContext('2d').drawImage(c,x0,y0,w,h,0,0,w,h);
+  const url=o.toDataURL('image/png');const ratio=h/w;
+  if($('#sgKeep').checked){const list=sigList();list.unshift({url,r:ratio});sigSave(list);}
+  useSig(url,ratio);
+}
+$('#sigFile').addEventListener('change',async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;busy(true,'Lese Unterschrift …');try{await sigFromFile(f);}catch(err){console.error(err);toast('Das Bild konnte nicht gelesen werden.');}busy(false);});
 function useSig(url,r){$('#sigDlg').hidden=true;const key=addImage(url);const w=150;S.placing={kind:'img',key,w,h:w*r,sig:true};setTool('place');toast('Tippe auf die Stelle, an der die Unterschrift stehen soll.');}
 window.addEventListener('resize',()=>{if(!$('#sigDlg').hidden)sizePad();});
 
